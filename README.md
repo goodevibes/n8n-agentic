@@ -17,7 +17,7 @@ The agent can list workflows, execute them, help debug errors, and answer questi
 ### 1. Install and Build
 
 ```bash
-git clone https://github.com/your-org/n8n-agentic.git
+git clone https://github.com/guillaumegay13/n8n-agentic.git
 cd n8n-agentic
 pnpm install
 pnpm build > build.log 2>&1
@@ -237,7 +237,7 @@ The vibe8n Agent API is a separate service.
 
 ## Support
 
-- **UI Issues:** https://github.com/your-org/n8n-agentic/issues
+- **UI Issues:** https://github.com/guillaumegay13/n8n-agentic/issues
 - **vibe8n API:** guillaume.gay@protonmail.com
 
 ---
