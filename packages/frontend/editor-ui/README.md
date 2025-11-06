@@ -58,12 +58,24 @@ See [Configuration Reference](https://cli.vuejs.org/config/).
 
 You can find the license information [here](https://github.com/n8n-io/n8n/blob/master/README.md#license)
 
-### Media Agent MCP panel
+### vibe8n Panel
 
-Set the `VITE_MCP_AGENT_API_URL` environment variable before running `pnpm serve` if you want the in-app Media Agent sidebar to connect to the Python sidecar.
+The vibe8n panel provides an integrated MCP agent interface within the n8n editor.
 
+**Quick Start (defaults to localhost):**
 ```bash
-export VITE_MCP_AGENT_API_URL='http://localhost:8000'
+pnpm --filter n8n-editor-ui serve
 ```
 
-With the frontend running you'll see a "Media Agent" button near the existing assistant control; it opens a chat panel that relays prompts to the MCP server.
+**Custom API URL:**
+```bash
+export VITE_MCP_AGENT_API_URL='http://localhost:8000'  # or your custom URL
+pnpm --filter n8n-editor-ui serve
+```
+
+**Authentication Configuration:**
+- **Localhost (default)**: No authentication required - works immediately
+- **Cloud (vibe8n.io)**: Authentication always required with email signup
+- **Self-hosted with auth**: Set `VITE_MCP_AGENT_REQUIRE_AUTH=true` to enable signup
+
+With the frontend running you'll see a "vibe8n" button in the lower-right corner. Click it to open the chat panel that connects to your MCP agent server.

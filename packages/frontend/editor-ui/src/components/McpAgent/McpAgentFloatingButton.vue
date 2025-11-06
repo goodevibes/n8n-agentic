@@ -11,7 +11,7 @@ function openChat() {
 
 <template>
 	<div :class="$style.container" data-test-id="mcp-agent-floating-button">
-		<N8nButton type="primary" size="large" icon="robot" @click="openChat"> Media Agent </N8nButton>
+		<N8nButton type="primary" size="large" icon="robot" @click="openChat"> vibe8n </N8nButton>
 	</div>
 </template>
 

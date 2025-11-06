@@ -583,7 +583,7 @@ async function onFixWithAgentClick() {
 					icon="robot"
 					:loading="isMcpAgentBusy"
 					:disabled="isMcpAgentBusy"
-					label="Fix with Agent"
+					label="Fix with vibe8n"
 					@click="onFixWithAgentClick"
 				/>
 			</div>

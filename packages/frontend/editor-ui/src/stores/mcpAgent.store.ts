@@ -9,6 +9,7 @@ export interface McpAgentMessage {
 	role: McpAgentMessageRole;
 	content: string;
 	timestamp: string;
+	trace?: McpAgentTraceEntry[];
 }
 
 type McpAgentEventType =
@@ -53,6 +54,24 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 	const draft = ref('');
 	const trace = ref<McpAgentTraceEntry[]>([]);
 	const isTraceExpanded = ref(false);
+	const userApiKey = ref<string | null>(null);
+	const isApiKeyModalOpen = ref(false);
+	const isUpgradeModalOpen = ref(false);
+	const rateLimitError = ref<{ limit: number; reset_at: string } | null>(null);
+	const plans = ref<
+		Array<{
+			id: string;
+			name: string;
+			price: number;
+			currency: string;
+			interval: string;
+			description: string;
+			features: string[];
+			rate_limit: number;
+			price_id: string | null;
+			popular?: boolean;
+		}>
+	>([]);
 
 	const baseUrl = computed(() =>
 		sanitizeBaseUrl(import.meta.env.VITE_MCP_AGENT_API_URL as string | undefined),
@@ -60,17 +79,52 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 
 	const chatEndpoint = computed(() => `${baseUrl.value}/chat`);
 	const apiToken = import.meta.env.VITE_MCP_AGENT_API_TOKEN as string | undefined;
+	const apiKeyGenerationUrl =
+		(import.meta.env.VITE_MCP_AGENT_KEY_URL as string | undefined) || 'https://vibe8n.io/dashboard';
+
+	const shouldRequireAuth = computed(() => {
+		const apiUrl = baseUrl.value.toLowerCase();
+
+		// Cloud URLs (vibe8n.io) always require auth
+		if (apiUrl.includes('vibe8n.io')) {
+			return true;
+		}
+
+		// For localhost/self-hosted: only require auth if explicitly enabled
+		const requireAuthFlag = import.meta.env.VITE_MCP_AGENT_REQUIRE_AUTH as string | undefined;
+		console.log('[McpAgent] shouldRequireAuth check:', {
+			apiUrl,
+			requireAuthFlag,
+			result: requireAuthFlag === 'true',
+		});
+		return requireAuthFlag === 'true';
+	});
+
+	const isAuthenticated = computed(() => {
+		// If auth is not required, always consider authenticated
+		if (!shouldRequireAuth.value) {
+			console.log('[McpAgent] isAuthenticated: true (auth not required)');
+			return true;
+		}
+		// If auth is required, check for user API key
+		const result = !!userApiKey.value;
+		console.log('[McpAgent] isAuthenticated:', result, 'userApiKey:', userApiKey.value);
+		return result;
+	});
 	const eventStream = ref<EventSource | null>(null);
 	const hasReceivedStreamEvent = ref(false);
 	const isBrowser = typeof window !== 'undefined';
 	const eventStreamUrl = computed(() => {
 		if (!sessionId.value) return null;
 		const base = `${baseUrl.value}/sessions/${sessionId.value}/events`;
-		if (!apiToken) {
+
+		// Prefer user API key over environment token
+		const token = userApiKey.value || apiToken;
+		if (!token) {
 			return base;
 		}
 		const separator = base.includes('?') ? '&' : '?';
-		return `${base}${separator}token=${encodeURIComponent(apiToken)}`;
+		return `${base}${separator}token=${encodeURIComponent(token)}`;
 	});
 
 	const canSubmit = computed(() => draft.value.trim().length > 0 && !isSending.value);
@@ -184,12 +238,17 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		isTraceExpanded.value = false;
 	}
 
-	function appendMessage(role: McpAgentMessageRole, content: string) {
+	function appendMessage(
+		role: McpAgentMessageRole,
+		content: string,
+		traceEntries?: McpAgentTraceEntry[],
+	) {
 		messages.value.push({
 			id: crypto.randomUUID(),
 			role,
 			content: role === 'assistant' ? formatAssistantMessage(content) : content,
 			timestamp: timestamp(),
+			trace: traceEntries && traceEntries.length > 0 ? traceEntries : undefined,
 		});
 	}
 
@@ -290,27 +349,105 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		startNewSession();
 	}
 
+	function loadApiKeyFromStorage(): void {
+		if (!isBrowser) return;
+		try {
+			const stored = localStorage.getItem('mcpAgentApiKey');
+			if (stored) {
+				userApiKey.value = stored;
+			}
+		} catch (error) {
+			console.warn('[McpAgent] Failed to load API key from localStorage', error);
+		}
+	}
+
+	function saveApiKeyToStorage(apiKey: string): void {
+		if (!isBrowser) return;
+		try {
+			localStorage.setItem('mcpAgentApiKey', apiKey);
+			userApiKey.value = apiKey;
+		} catch (error) {
+			console.warn('[McpAgent] Failed to save API key to localStorage', error);
+		}
+	}
+
+	function clearApiKey(): void {
+		if (!isBrowser) return;
+		try {
+			localStorage.removeItem('mcpAgentApiKey');
+			userApiKey.value = null;
+		} catch (error) {
+			console.warn('[McpAgent] Failed to clear API key', error);
+		}
+	}
+
+	function setApiKey(apiKey: string): void {
+		saveApiKeyToStorage(apiKey);
+		isApiKeyModalOpen.value = false;
+		// Reconnect event stream with new auth token
+		if (sessionId.value && isBrowser) {
+			disconnectEventStream();
+			connectEventStream();
+		}
+	}
+
+	function openApiKeyModal(): void {
+		isApiKeyModalOpen.value = true;
+	}
+
+	function closeApiKeyModal(): void {
+		isApiKeyModalOpen.value = false;
+	}
+
+	function toggleApiKeyModal(): void {
+		isApiKeyModalOpen.value = !isApiKeyModalOpen.value;
+	}
+
 	function handleAgentEvents(events: McpAgentEvent[], finalMessage?: string) {
+		let assistantMessageContent: string | null = null;
 		let assistantMessageEmitted = false;
 		removeTracePlaceholder();
+		const collectedTrace: McpAgentTraceEntry[] = [];
+
+		// First pass: collect all trace entries and find assistant message
 		for (const event of events) {
 			if (event.type === 'assistant_message') {
 				const content = coerceContent(event.content);
 				if (content) {
-					appendMessage('assistant', content);
-					assistantMessageEmitted = true;
+					assistantMessageContent = content;
 				}
 				continue;
 			}
 
 			const summary = summariseEvent(event);
 			if (summary) {
+				const traceEntry = {
+					id: crypto.randomUUID(),
+					type: event.type,
+					summary,
+					timestamp: timestamp(),
+				};
+				collectedTrace.push(traceEntry);
 				recordTrace(event, summary);
 			}
 		}
 
+		// Second pass: append assistant message with collected trace
+		if (assistantMessageContent) {
+			appendMessage(
+				'assistant',
+				assistantMessageContent,
+				collectedTrace.length > 0 ? [...collectedTrace] : undefined,
+			);
+			assistantMessageEmitted = true;
+		}
+
 		if (!assistantMessageEmitted && finalMessage) {
-			appendMessage('assistant', finalMessage);
+			appendMessage(
+				'assistant',
+				finalMessage,
+				collectedTrace.length > 0 ? [...collectedTrace] : undefined,
+			);
 		}
 
 		if (!events.length) {
@@ -343,11 +480,17 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		isSending.value = true;
 
 		try {
+			const headers: Record<string, string> = {
+				'Content-Type': 'application/json',
+			};
+
+			if (userApiKey.value) {
+				headers['Authorization'] = `Bearer ${userApiKey.value}`;
+			}
+
 			const response = await fetch(chatEndpoint.value, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers,
 				body: JSON.stringify({
 					prompt: text,
 					session_id: sessionId.value,
@@ -355,6 +498,15 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 			});
 
 			if (!response.ok) {
+				// Handle rate limit errors (429)
+				if (response.status === 429) {
+					const errorData = await response.json().catch(() => ({}));
+					rateLimitError.value = errorData.detail || {};
+					isUpgradeModalOpen.value = true;
+					throw new Error(
+						errorData.detail?.message || 'Rate limit exceeded. Please upgrade your plan.',
+					);
+				}
 				throw new Error(`Request failed with status ${response.status}`);
 			}
 
@@ -393,7 +545,11 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 						.reverse()
 						.find((message) => message.role === 'assistant');
 					if (!lastAssistantMessage || lastAssistantMessage.content.trim() !== normalisedFinal) {
-						appendMessage('assistant', finalMessage);
+						// Attach accumulated trace to the final message
+						const currentTrace = trace.value.length > 0 ? [...trace.value] : undefined;
+						appendMessage('assistant', finalMessage, currentTrace);
+						// Clear the global trace now that it's attached to the message
+						resetTrace();
 					}
 				}
 				removeTracePlaceholder();
@@ -411,6 +567,60 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 			isSending.value = false;
 		}
 	}
+
+	async function fetchPlans() {
+		try {
+			const response = await fetch(`${baseUrl.value}/subscriptions/plans`);
+			if (response.ok) {
+				const data = await response.json();
+				plans.value = data.plans || [];
+			}
+		} catch (error) {
+			console.error('Failed to fetch plans:', error);
+		}
+	}
+
+	async function openUpgradeModal() {
+		isUpgradeModalOpen.value = true;
+		// Fetch latest prices from Stripe when modal opens
+		await fetchPlans();
+	}
+
+	function closeUpgradeModal() {
+		isUpgradeModalOpen.value = false;
+		rateLimitError.value = null;
+	}
+
+	async function createCheckoutSession(plan: 'starter' | 'scale') {
+		if (!userApiKey.value) {
+			throw new Error('User not authenticated');
+		}
+
+		const response = await fetch(`${baseUrl.value}/subscriptions/checkout`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${userApiKey.value}`,
+			},
+			body: JSON.stringify({
+				plan,
+				success_url: `${window.location.origin}?payment=success`,
+				cancel_url: `${window.location.origin}?payment=cancel`,
+			}),
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.detail || 'Failed to create checkout session');
+		}
+
+		const data = await response.json();
+		// Redirect to Stripe Checkout
+		window.location.href = data.checkout_url;
+	}
+
+	// Initialize: load API key from localStorage
+	loadApiKeyFromStorage();
 
 	return {
 		chatWidth,
@@ -432,6 +642,23 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		toggleTrace,
 		expandTrace,
 		collapseTrace,
+		shouldRequireAuth,
+		isAuthenticated,
+		userApiKey,
+		isApiKeyModalOpen,
+		setApiKey,
+		openApiKeyModal,
+		closeApiKeyModal,
+		toggleApiKeyModal,
+		clearApiKey,
+		apiKeyGenerationUrl,
+		isUpgradeModalOpen,
+		rateLimitError,
+		plans,
+		fetchPlans,
+		openUpgradeModal,
+		closeUpgradeModal,
+		createCheckoutSession,
 	};
 });
 
@@ -451,7 +678,8 @@ function coerceContent(value: unknown): string {
 function summariseEvent(event: McpAgentEvent): string | null {
 	switch (event.type) {
 		case 'thought': {
-			const content = truncateSummary(coerceContent(event.content));
+			// Don't truncate thoughts - users want to see full reasoning
+			const content = coerceContent(event.content);
 			return content || 'Thinking…';
 		}
 		case 'tool_call': {
@@ -463,6 +691,7 @@ function summariseEvent(event: McpAgentEvent): string | null {
 			return toolName ? `${toolName} completed` : 'Tool completed';
 		}
 		case 'system_notice': {
+			// Keep truncation for system notices (usually short anyway)
 			const content = truncateSummary(coerceContent(event.content));
 			return content || 'System notice';
 		}
