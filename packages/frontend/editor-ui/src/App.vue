@@ -156,7 +156,7 @@ useExposeCssVar('--ask-assistant-floating-button-bottom-offset', askAiFloatingBu
 			</div>
 			<Telemetry />
 			<AskAssistantFloatingButton v-if="assistantStore.isFloatingButtonShown" />
-			<McpAgentFloatingButton v-if="!mcpAgentStore.isOpen" />
+			<McpAgentFloatingButton v-if="usersStore.currentUser && !mcpAgentStore.isOpen" />
 		</div>
 		<AssistantsHub />
 		<McpAgentSidebar />
