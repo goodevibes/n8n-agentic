@@ -34,15 +34,33 @@ pnpm --filter n8n-editor-ui serve
 
 Open http://localhost:5678, click "vibe8n" button, sign up for an API key.
 
-**Option B: Build Your Own Agent**
+**Option B: Run Example Agent (Self-Hosted)**
 
 ```bash
-# Point to your custom agent API
+# In examples/ directory
+cd examples
+pip install -r requirements.txt
+
+# Configure (create .env with your settings)
+export ANTHROPIC_API_KEY=sk-ant-...
+export MCP_SERVER_COMMAND=npx
+export MCP_SERVER_ARGS=n8n-mcp
+export MCP_SERVER_ENV_N8N_API_URL=http://localhost:5678
+export MCP_SERVER_ENV_N8N_API_KEY=your-key
+
+# Start simple agent
+python simple_agent.py
+
+# In another terminal, start n8n frontend
 export VITE_MCP_AGENT_API_URL='http://localhost:8000'
 pnpm --filter n8n-editor-ui serve
 ```
 
-See "Building Your Own Agent" section below for implementation details.
+See `examples/README.md` for details on the reference implementation.
+
+**Option C: Build Your Own Agent**
+
+See "Building Your Own Agent" section below for API contract details.
 
 ### 3. Test It
 
@@ -95,6 +113,20 @@ alias n8n-local='export VITE_MCP_AGENT_API_URL="http://localhost:8000" && pnpm -
 ```
 
 ## Building Your Own Agent
+
+The vibe8n panel is **agent-agnostic** - it works with any backend that implements the `/chat` API contract.
+
+### Quick Start: Use the Example Agent
+
+We provide a minimal reference implementation in `examples/simple_agent.py`:
+- ~400 lines of Python
+- Connects to any MCP server (n8n-mcp, filesystem, GitHub, etc.)
+- No auth, no billing, no database - pure protocol demo
+- Perfect starting point for customization
+
+See `examples/README.md` for setup instructions.
+
+### Building From Scratch
 
 Want to build a custom agent? You need an HTTP API with one endpoint:
 

@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { useUIStore } from './ui.store';
+import { useWorkflowsStore } from './workflows.store';
 
-export type McpAgentMessageRole = 'user' | 'assistant' | 'system' | 'error';
+export type McpAgentMessageRole = 'user' | 'assistant' | 'system' | 'error' | 'approval';
 
 export interface McpAgentMessage {
 	id: string;
@@ -10,6 +11,7 @@ export interface McpAgentMessage {
 	content: string;
 	timestamp: string;
 	trace?: McpAgentTraceEntry[];
+	metadata?: Record<string, unknown>;
 }
 
 type McpAgentEventType =
@@ -44,6 +46,7 @@ function sanitizeBaseUrl(raw: string | undefined): string {
 
 export const useMcpAgentStore = defineStore('mcpAgent', () => {
 	const uiStore = useUIStore();
+	const workflowsStore = useWorkflowsStore();
 
 	const chatWidth = ref<number>(DEFAULT_CHAT_WIDTH);
 	const isOpen = ref(false);
@@ -72,6 +75,14 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 			popular?: boolean;
 		}>
 	>([]);
+
+	// Approval system
+	const pendingApproval = ref<{
+		approval_id: string;
+		tool_name: string;
+		arguments: Record<string, unknown>;
+		risk_level: string;
+	} | null>(null);
 
 	const baseUrl = computed(() =>
 		sanitizeBaseUrl(import.meta.env.VITE_MCP_AGENT_API_URL as string | undefined),
@@ -241,14 +252,20 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 	function appendMessage(
 		role: McpAgentMessageRole,
 		content: string,
-		traceEntries?: McpAgentTraceEntry[],
+		metadataOrTrace?: McpAgentTraceEntry[] | Record<string, unknown>,
 	) {
+		// Handle both trace entries and approval metadata
+		const isTraceArray = Array.isArray(metadataOrTrace);
+		const traceEntries = isTraceArray ? metadataOrTrace : undefined;
+		const metadata = !isTraceArray ? metadataOrTrace : undefined;
+
 		messages.value.push({
 			id: crypto.randomUUID(),
 			role,
 			content: role === 'assistant' ? formatAssistantMessage(content) : content,
 			timestamp: timestamp(),
 			trace: traceEntries && traceEntries.length > 0 ? traceEntries : undefined,
+			metadata,
 		});
 	}
 
@@ -419,6 +436,32 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 				continue;
 			}
 
+			// Check for approval requests - add as inline message
+			if (
+				event.type === 'system_notice' &&
+				event.metadata &&
+				typeof event.metadata === 'object' &&
+				'requires_approval' in event.metadata &&
+				event.metadata.requires_approval === true
+			) {
+				const metadata = event.metadata as Record<string, unknown>;
+				pendingApproval.value = {
+					approval_id: String(metadata.approval_id || ''),
+					tool_name: String(metadata.tool_name || ''),
+					arguments: (metadata.arguments as Record<string, unknown>) || {},
+					risk_level: String(metadata.risk_level || 'moderate'),
+				};
+
+				// Add approval request as an inline message in the chat
+				appendMessage('approval', event.content, {
+					approval_id: String(metadata.approval_id || ''),
+					tool_name: String(metadata.tool_name || ''),
+					arguments: (metadata.arguments as Record<string, unknown>) || {},
+					risk_level: String(metadata.risk_level || 'moderate'),
+				});
+				continue;
+			}
+
 			const summary = summariseEvent(event);
 			if (summary) {
 				const traceEntry = {
@@ -455,6 +498,20 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		}
 	}
 
+	async function refreshWorkspaceAfterApproval() {
+		// Refresh workspace 2 seconds after approval to catch any changes
+		console.log('[McpAgent] Scheduling workspace refresh in 2 seconds...');
+		await new Promise((resolve) => setTimeout(resolve, 2000));
+
+		try {
+			console.log('[McpAgent] Refreshing workspace now...');
+			await workflowsStore.fetchAllWorkflows();
+			console.log('[McpAgent] ✓ Workspace refreshed successfully');
+		} catch (error) {
+			console.error('[McpAgent] ✗ Failed to refresh workspace:', error);
+		}
+	}
+
 	function handleStreamedEvent(event: McpAgentEvent) {
 		hasReceivedStreamEvent.value = true;
 		handleAgentEvents([event]);
@@ -465,6 +522,9 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		if (!text || isSending.value) return;
 
 		ensureSession();
+		// Wait a moment for EventSource to connect
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
 		appendMessage('user', text);
 		draft.value = '';
 		hasError.value = null;
@@ -619,6 +679,61 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		window.location.href = data.checkout_url;
 	}
 
+	async function respondToApproval(approved: boolean, remember?: 'once' | 'session' | 'always') {
+		if (!pendingApproval.value || !userApiKey.value) {
+			return;
+		}
+
+		const approvalId = pendingApproval.value.approval_id;
+
+		try {
+			const response = await fetch(`${baseUrl.value}/approvals/${approvalId}/respond`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${userApiKey.value}`,
+				},
+				body: JSON.stringify({
+					approved,
+					remember: remember || null,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to respond to approval: ${response.status}`);
+			}
+
+			// Clear pending approval after successful response
+			pendingApproval.value = null;
+
+			// Refresh workspace after approval (don't await - let it run in background)
+			if (approved) {
+				void refreshWorkspaceAfterApproval();
+			}
+		} catch (error) {
+			console.error('Error responding to approval:', error);
+			hasError.value = error instanceof Error ? error.message : 'Failed to respond to approval';
+		}
+	}
+
+	function closeApprovalModal() {
+		pendingApproval.value = null;
+	}
+
+	function removeApprovalMessage(approvalId: string) {
+		const index = messages.value.findIndex(
+			(msg) =>
+				msg.role === 'approval' &&
+				msg.metadata &&
+				typeof msg.metadata === 'object' &&
+				'approval_id' in msg.metadata &&
+				msg.metadata.approval_id === approvalId,
+		);
+		if (index !== -1) {
+			messages.value.splice(index, 1);
+		}
+	}
+
 	// Initialize: load API key from localStorage
 	loadApiKeyFromStorage();
 
@@ -659,6 +774,11 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		openUpgradeModal,
 		closeUpgradeModal,
 		createCheckoutSession,
+		pendingApproval,
+		respondToApproval,
+		closeApprovalModal,
+		removeApprovalMessage,
+		baseUrl,
 	};
 });
 

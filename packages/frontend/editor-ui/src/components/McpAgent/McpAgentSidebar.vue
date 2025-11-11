@@ -27,6 +27,7 @@ const {
 	isUpgradeModalOpen,
 	rateLimitError,
 	plans,
+	pendingApproval,
 } = storeToRefs(store);
 
 const apiKeyGenerationUrl = computed(() => store.apiKeyGenerationUrl);
@@ -36,9 +37,26 @@ const upgradePlans = computed(() => plans.value.filter((p) => p.id !== 'free'));
 const apiKeyInput = ref('');
 const isSavingKey = ref(false);
 const apiKeyError = ref<string | null>(null);
+const vibeApiConfigured = ref(false);
+const vibeApiUserEmail = ref<string | null>(null);
 const maskedApiKey = computed(() => {
 	if (!userApiKey.value) return '';
 	return userApiKey.value.slice(0, 12) + '...';
+});
+
+// n8n credentials
+const n8nApiUrl = ref('');
+const n8nApiKey = ref('');
+const isSavingN8n = ref(false);
+const n8nError = ref<string | null>(null);
+const n8nConfigured = ref(false);
+const n8nConfiguredUrl = ref<string | null>(null);
+
+// Auto-detect current n8n instance URL (used as default)
+const currentN8nUrl = computed(() => {
+	const { protocol, hostname, port } = window.location;
+	const portSuffix = port && port !== '80' && port !== '443' ? `:${port}` : '';
+	return `${protocol}//${hostname}${portSuffix}`;
 });
 
 const traceBadgeCount = computed(() =>
@@ -120,16 +138,51 @@ function openKeyGenerationWebsite() {
 	window.open(apiKeyGenerationUrl.value, '_blank');
 }
 
+async function validateVibeApiKey() {
+	if (!userApiKey.value) {
+		vibeApiConfigured.value = false;
+		vibeApiUserEmail.value = null;
+		return;
+	}
+
+	try {
+		const response = await fetch(`${store.baseUrl}/users/me`, {
+			headers: {
+				Authorization: `Bearer ${userApiKey.value}`,
+			},
+		});
+
+		if (response.ok) {
+			const data = await response.json();
+			vibeApiConfigured.value = true;
+			vibeApiUserEmail.value = data.email;
+		} else {
+			vibeApiConfigured.value = false;
+			vibeApiUserEmail.value = null;
+		}
+	} catch (error) {
+		console.error('Failed to validate vibe8n API key:', error);
+		vibeApiConfigured.value = false;
+		vibeApiUserEmail.value = null;
+	}
+}
+
 function toggleApiKeySettings() {
 	if (!isApiKeyModalOpen.value) {
-		// Opening settings - clear the input
+		// Opening settings - clear the inputs and initialize n8n URL
 		apiKeyInput.value = '';
 		apiKeyError.value = null;
+		n8nApiUrl.value = currentN8nUrl.value; // Initialize with auto-detected URL
+		n8nApiKey.value = '';
+		n8nError.value = null;
+		// Validate both API key statuses
+		void validateVibeApiKey();
+		void fetchN8nCredentials();
 	}
 	store.toggleApiKeyModal();
 }
 
-function handleSaveApiKey() {
+async function handleSaveApiKey() {
 	const key = apiKeyInput.value.trim();
 	if (!key) {
 		apiKeyError.value = 'Please enter a valid API key';
@@ -142,6 +195,12 @@ function handleSaveApiKey() {
 	try {
 		store.setApiKey(key);
 		apiKeyInput.value = '';
+		// Validate the new key
+		await validateVibeApiKey();
+
+		if (!vibeApiConfigured.value) {
+			apiKeyError.value = 'Invalid API key. Please check and try again.';
+		}
 	} catch (error) {
 		apiKeyError.value = error instanceof Error ? error.message : 'Failed to save API key';
 	} finally {
@@ -163,6 +222,164 @@ async function handleUpgrade(plan: 'starter' | 'scale') {
 		console.error('Upgrade error:', error);
 	}
 }
+
+const rememberChoice = ref<'once' | 'session' | 'always'>('once');
+const processingApprovalId = ref<string | null>(null);
+const removingApprovalIds = ref<Set<string>>(new Set());
+
+async function handleApprove(approvalId: string) {
+	processingApprovalId.value = approvalId;
+	await store.respondToApproval(true, rememberChoice.value);
+	rememberChoice.value = 'once'; // Reset for next approval
+
+	// Mark as removing to trigger fade animation
+	removingApprovalIds.value.add(approvalId);
+	await nextTick();
+
+	// Remove from DOM after animation
+	setTimeout(() => {
+		store.removeApprovalMessage(approvalId);
+		removingApprovalIds.value.delete(approvalId);
+		processingApprovalId.value = null;
+	}, 500); // Match animation duration (400ms + 100ms buffer)
+}
+
+async function handleReject(approvalId: string) {
+	processingApprovalId.value = approvalId;
+	await store.respondToApproval(false);
+	rememberChoice.value = 'once'; // Reset for next approval
+
+	// Mark as removing to trigger fade animation
+	removingApprovalIds.value.add(approvalId);
+	await nextTick();
+
+	// Remove from DOM after animation
+	setTimeout(() => {
+		store.removeApprovalMessage(approvalId);
+		removingApprovalIds.value.delete(approvalId);
+		processingApprovalId.value = null;
+	}, 500); // Match animation duration (400ms + 100ms buffer)
+}
+
+function getRiskLevelColor(riskLevel: string): string {
+	switch (riskLevel) {
+		case 'destructive':
+			return 'var(--color-danger)';
+		case 'moderate':
+			return 'var(--color-warning)';
+		default:
+			return 'var(--color-success)';
+	}
+}
+
+// n8n credentials management
+async function fetchN8nCredentials() {
+	if (!userApiKey.value) return;
+
+	try {
+		const response = await fetch(`${store.baseUrl}/users/me/n8n-credentials`, {
+			headers: {
+				Authorization: `Bearer ${userApiKey.value}`,
+			},
+		});
+
+		if (response.ok) {
+			const data = await response.json();
+			n8nConfigured.value = data.configured;
+			n8nConfiguredUrl.value = data.n8n_api_url;
+		}
+	} catch (error) {
+		console.error('Failed to fetch n8n credentials:', error);
+	}
+}
+
+async function handleSaveN8nCredentials() {
+	if (!userApiKey.value) return;
+
+	const url = n8nApiUrl.value.trim(); // Use editable URL
+	const key = n8nApiKey.value.trim();
+
+	if (!url) {
+		n8nError.value = 'URL is required';
+		return;
+	}
+
+	if (!key) {
+		n8nError.value = 'API key is required';
+		return;
+	}
+
+	isSavingN8n.value = true;
+	n8nError.value = null;
+
+	try {
+		const response = await fetch(`${store.baseUrl}/users/me/n8n-credentials`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${userApiKey.value}`,
+			},
+			body: JSON.stringify({
+				n8n_api_url: url,
+				n8n_api_key: key,
+			}),
+		});
+
+		if (!response.ok) {
+			const error = await response.json();
+			// Handle both string and object error formats
+			const errorMessage =
+				typeof error.detail === 'string'
+					? error.detail
+					: error.detail?.message || error.detail?.error || 'Failed to save n8n credentials';
+			throw new Error(errorMessage);
+		}
+
+		// Clear form and refresh status
+		n8nApiUrl.value = '';
+		n8nApiKey.value = '';
+		await fetchN8nCredentials();
+	} catch (error) {
+		n8nError.value = error instanceof Error ? error.message : 'Failed to save n8n credentials';
+		// Don't clear fields on error so user can see what they entered
+	} finally {
+		isSavingN8n.value = false;
+	}
+}
+
+async function handleRemoveN8nCredentials() {
+	if (!userApiKey.value) return;
+
+	try {
+		const response = await fetch(`${store.baseUrl}/users/me/n8n-credentials`, {
+			method: 'DELETE',
+			headers: {
+				Authorization: `Bearer ${userApiKey.value}`,
+			},
+		});
+
+		if (!response.ok) {
+			throw new Error('Failed to remove credentials');
+		}
+
+		n8nConfigured.value = false;
+		n8nConfiguredUrl.value = null;
+		n8nApiKey.value = '';
+	} catch (error) {
+		console.error('Failed to remove n8n credentials:', error);
+	}
+}
+
+// Fetch n8n credentials when authenticated
+watch(
+	() => isAuthenticated.value,
+	(authenticated) => {
+		if (authenticated) {
+			void fetchN8nCredentials();
+		}
+	},
+	{ immediate: true },
+);
 </script>
 
 <template>
@@ -209,13 +426,14 @@ async function handleUpgrade(plan: 'starter' | 'scale') {
 
 							<div class="auth-form__divider"></div>
 
-							<form @submit.prevent="handleSaveApiKey">
+							<form @submit.prevent="handleSaveApiKey" autocomplete="off">
 								<p class="auth-form__input-label">Then paste your key below</p>
 								<N8nInput
 									v-model="apiKeyInput"
 									type="password"
 									placeholder="v8_..."
 									:disabled="isSavingKey"
+									autocomplete="new-password"
 								/>
 								<N8nButton
 									type="primary"
@@ -231,40 +449,104 @@ async function handleUpgrade(plan: 'starter' | 'scale') {
 					</div>
 				</section>
 
-				<!-- API Key Settings Screen (inline) -->
+				<!-- Settings Screen -->
 				<section v-else-if="isApiKeyModalOpen" class="panel__body panel__settings">
 					<div class="settings-content">
-						<div class="api-key-info">
-							<p class="api-key-info__label">Current API Key</p>
-							<p class="api-key-info__value">{{ maskedApiKey }}</p>
-						</div>
-
-						<div class="api-key-form">
-							<p class="api-key-form__label">Update API Key</p>
-							<form @submit.prevent="handleSaveApiKey">
+						<!-- vibe8n API Key Section -->
+						<div class="settings-section">
+							<h4 class="settings-section__title">vibe8n API</h4>
+							<p
+								v-if="vibeApiConfigured"
+								class="settings-section__status settings-section__status--success"
+							>
+								✓ Connected as <code>{{ vibeApiUserEmail }}</code>
+							</p>
+							<p v-else-if="userApiKey" class="settings-section__status">
+								Current: <code>{{ maskedApiKey }}</code>
+							</p>
+							<form @submit.prevent="handleSaveApiKey" autocomplete="off" class="settings-form">
 								<N8nInput
 									v-model="apiKeyInput"
 									type="password"
 									placeholder="Enter new API key..."
 									:disabled="isSavingKey"
+									autocomplete="new-password"
 								/>
-								<N8nButton
-									type="primary"
-									size="large"
-									:loading="isSavingKey"
-									:disabled="!apiKeyInput.trim()"
-									@click="handleSaveApiKey"
-								>
-									Update Key
-								</N8nButton>
+								<div class="settings-actions">
+									<N8nButton
+										type="primary"
+										:loading="isSavingKey"
+										:disabled="!apiKeyInput.trim()"
+										@click="handleSaveApiKey"
+									>
+										Update
+									</N8nButton>
+									<N8nButton type="tertiary" @click="openKeyGenerationWebsite"> Get Key </N8nButton>
+								</div>
 							</form>
 						</div>
 
-						<div class="api-key-actions">
-							<N8nButton type="secondary" size="large" @click="openKeyGenerationWebsite">
-								Get New Key
-							</N8nButton>
-							<N8nButton type="tertiary" @click="handleRemoveApiKey"> Remove API Key </N8nButton>
+						<!-- n8n Connection Section -->
+						<div class="settings-section">
+							<h4 class="settings-section__title">n8n Connection</h4>
+							<p
+								v-if="n8nConfigured"
+								class="settings-section__status settings-section__status--success"
+							>
+								✓ Connected to <code>{{ n8nConfiguredUrl }}</code>
+							</p>
+							<form
+								@submit.prevent="handleSaveN8nCredentials"
+								autocomplete="off"
+								class="settings-form"
+							>
+								<N8nInput
+									v-model="n8nApiUrl"
+									type="text"
+									placeholder="n8n instance URL (e.g., http://localhost:5678)"
+									:disabled="isSavingN8n || n8nConfigured"
+									autocomplete="off"
+								/>
+								<N8nInput
+									v-model="n8nApiKey"
+									type="password"
+									placeholder="Enter your n8n API key..."
+									:disabled="isSavingN8n || n8nConfigured"
+									autocomplete="new-password"
+								/>
+								<p v-if="n8nError" class="form-error">{{ n8nError }}</p>
+								<div class="settings-actions">
+									<N8nButton
+										v-if="!n8nConfigured"
+										type="primary"
+										:loading="isSavingN8n"
+										:disabled="!n8nApiUrl.trim() || !n8nApiKey.trim()"
+										@click="handleSaveN8nCredentials"
+									>
+										Connect
+									</N8nButton>
+									<N8nButton
+										v-else
+										type="secondary"
+										:disabled="isSavingN8n"
+										@click="handleRemoveN8nCredentials"
+									>
+										Disconnect
+									</N8nButton>
+									<N8nButton
+										type="tertiary"
+										tag="a"
+										href="https://docs.n8n.io/api/authentication/"
+										target="_blank"
+										rel="noopener noreferrer"
+										@click.prevent="
+											() => window.open('https://docs.n8n.io/api/authentication/', '_blank')
+										"
+									>
+										Get Key
+									</N8nButton>
+								</div>
+							</form>
 						</div>
 					</div>
 				</section>
@@ -299,7 +581,56 @@ async function handleUpgrade(plan: 'starter' | 'scale') {
 									</transition>
 								</div>
 							</li>
-							<li :class="['messages__item', `messages__item--${message.role}`]">
+
+							<!-- Approval Request Card -->
+							<li
+								v-if="message.role === 'approval' && message.metadata"
+								class="messages__item messages__item--approval"
+								:class="{
+									'messages__item--removing': removingApprovalIds.has(
+										String(message.metadata.approval_id),
+									),
+								}"
+							>
+								<div
+									class="approval-card"
+									:class="{
+										'approval-card--processing':
+											processingApprovalId === message.metadata.approval_id,
+									}"
+								>
+									<div class="approval-card__content">
+										<span class="approval-card__title"
+											>Approve <code>{{ message.metadata.tool_name }}</code
+											>?</span
+										>
+										<div class="approval-card__actions">
+											<N8nButton
+												type="primary"
+												size="mini"
+												:loading="processingApprovalId === message.metadata.approval_id"
+												:disabled="processingApprovalId === message.metadata.approval_id"
+												@click="handleApprove(String(message.metadata.approval_id))"
+											>
+												Approve
+											</N8nButton>
+											<N8nButton
+												type="secondary"
+												size="mini"
+												:disabled="processingApprovalId === message.metadata.approval_id"
+												@click="handleReject(String(message.metadata.approval_id))"
+											>
+												Reject
+											</N8nButton>
+										</div>
+									</div>
+								</div>
+							</li>
+
+							<li
+								v-if="message.role !== 'approval'"
+								:class="['messages__item', `messages__item--${message.role}`]"
+							>
 								<span class="messages__label">
 									{{
 										message.role === 'user'
@@ -426,6 +757,54 @@ async function handleUpgrade(plan: 'starter' | 'scale') {
 								Upgrade to {{ plan.name }}
 							</N8nButton>
 						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Approval Modal -->
+		<div v-if="pendingApproval" class="approval-modal-overlay" @click="store.closeApprovalModal">
+			<div class="approval-modal" @click.stop>
+				<div class="approval-modal__header">
+					<h3>Action Requires Approval</h3>
+					<N8nIconButton icon="x" type="tertiary" size="small" @click="store.closeApprovalModal" />
+				</div>
+				<div class="approval-modal__content">
+					<div class="approval-modal__tool">
+						<span class="approval-modal__label">Tool:</span>
+						<code class="approval-modal__tool-name">{{ pendingApproval.tool_name }}</code>
+					</div>
+					<div class="approval-modal__risk">
+						<span class="approval-modal__label">Risk Level:</span>
+						<span
+							class="approval-modal__risk-badge"
+							:style="{ color: getRiskLevelColor(pendingApproval.risk_level) }"
+						>
+							{{ pendingApproval.risk_level.toUpperCase() }}
+						</span>
+					</div>
+					<div
+						v-if="Object.keys(pendingApproval.arguments).length > 0"
+						class="approval-modal__arguments"
+					>
+						<span class="approval-modal__label">Arguments:</span>
+						<pre class="approval-modal__code">{{
+							JSON.stringify(pendingApproval.arguments, null, 2)
+						}}</pre>
+					</div>
+
+					<div class="approval-modal__remember">
+						<label for="remember-choice">Remember my choice:</label>
+						<select id="remember-choice" v-model="rememberChoice" class="approval-modal__select">
+							<option value="once">Just this time</option>
+							<option value="session">For this session</option>
+							<option value="always">Always for this tool</option>
+						</select>
+					</div>
+
+					<div class="approval-modal__actions">
+						<N8nButton type="secondary" size="large" @click="handleReject"> Reject </N8nButton>
+						<N8nButton type="primary" size="large" @click="handleApprove"> Approve </N8nButton>
 					</div>
 				</div>
 			</div>
@@ -968,5 +1347,266 @@ async function handleUpgrade(plan: 'starter' | 'scale') {
 	left: 0;
 	color: var(--color-success);
 	font-weight: var(--font-weight-bold);
+}
+
+/* Approval Modal Styles */
+.approval-modal-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(0, 0, 0, 0.5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 9999;
+	padding: var(--spacing-l);
+}
+
+.approval-modal {
+	background: var(--color-surface-primary);
+	border-radius: var(--border-radius-large);
+	max-width: 500px;
+	width: 100%;
+	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.approval-modal__header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: var(--spacing-m);
+	border-bottom: 1px solid var(--color-foreground-base);
+}
+
+.approval-modal__header h3 {
+	margin: 0;
+	font-size: var(--font-size-l);
+	font-weight: var(--font-weight-bold);
+	color: var(--color-text-dark);
+}
+
+.approval-modal__content {
+	padding: var(--spacing-l);
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-m);
+}
+
+.approval-modal__tool,
+.approval-modal__risk {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing-xs);
+}
+
+.approval-modal__label {
+	font-size: var(--font-size-s);
+	font-weight: var(--font-weight-bold);
+	color: var(--color-text-light);
+}
+
+.approval-modal__tool-name {
+	font-family: 'Monaco', 'Courier New', monospace;
+	font-size: var(--font-size-s);
+	background: var(--color-background-light);
+	padding: var(--spacing-4xs) var(--spacing-2xs);
+	border-radius: var(--border-radius-small);
+	color: var(--color-text-dark);
+}
+
+.approval-modal__risk-badge {
+	font-size: var(--font-size-xs);
+	font-weight: var(--font-weight-bold);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.approval-modal__arguments {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-xs);
+}
+
+.approval-modal__code {
+	background: var(--color-background-dark);
+	padding: var(--spacing-s);
+	border-radius: var(--border-radius-base);
+	font-family: 'Monaco', 'Courier New', monospace;
+	font-size: var(--font-size-2xs);
+	color: var(--color-text-base);
+	overflow-x: auto;
+	margin: 0;
+	max-height: 200px;
+	overflow-y: auto;
+}
+
+.approval-modal__remember {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-xs);
+	padding-top: var(--spacing-s);
+	border-top: 1px solid var(--color-foreground-base);
+}
+
+.approval-modal__remember label {
+	font-size: var(--font-size-s);
+	font-weight: var(--font-weight-bold);
+	color: var(--color-text-base);
+}
+
+.approval-modal__select {
+	padding: var(--spacing-xs);
+	border: 1px solid var(--color-foreground-base);
+	border-radius: var(--border-radius-base);
+	font-size: var(--font-size-s);
+	background: var(--color-surface-primary);
+	color: var(--color-text-dark);
+	cursor: pointer;
+}
+
+.approval-modal__select:focus {
+	outline: none;
+	border-color: var(--color-primary);
+}
+
+.approval-modal__actions {
+	display: flex;
+	gap: var(--spacing-s);
+	padding-top: var(--spacing-s);
+	border-top: 1px solid var(--color-foreground-base);
+}
+
+.approval-modal__actions button {
+	flex: 1;
+}
+
+/* Settings Section Styles */
+.settings-section {
+	padding-bottom: var(--spacing-m);
+	margin-bottom: var(--spacing-m);
+	border-bottom: 1px solid var(--color-foreground-base);
+}
+
+.settings-section:last-child {
+	border-bottom: none;
+	margin-bottom: 0;
+	padding-bottom: 0;
+}
+
+.settings-section__title {
+	margin: 0 0 var(--spacing-xs) 0;
+	font-size: var(--font-size-s);
+	font-weight: var(--font-weight-bold);
+	color: var(--color-text-dark);
+}
+
+.settings-section__status {
+	margin: 0 0 var(--spacing-s) 0;
+	font-size: var(--font-size-2xs);
+	color: var(--color-text-light);
+}
+
+.settings-section__status--success {
+	color: var(--color-success);
+}
+
+.settings-section__status code {
+	font-family: 'Monaco', 'Courier New', monospace;
+	font-size: var(--font-size-2xs);
+	background: var(--color-background-light);
+	padding: var(--spacing-5xs) var(--spacing-3xs);
+	border-radius: var(--border-radius-small);
+	color: var(--color-text-dark);
+}
+
+.settings-form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-xs);
+}
+
+.settings-actions {
+	display: flex;
+	gap: var(--spacing-xs);
+	align-items: center;
+}
+
+.form-error {
+	margin: 0;
+	padding: var(--spacing-xs);
+	background: var(--color-danger-tint-2);
+	border: 1px solid var(--color-danger-tint-1);
+	border-radius: var(--border-radius-base);
+	color: var(--color-danger);
+	font-size: var(--font-size-2xs);
+}
+
+/* Inline Approval Card - Minimal Design */
+.messages__item--approval {
+	padding: 0;
+	margin: var(--spacing-xs) 0;
+	transition:
+		opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+		transform 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+		max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.1s,
+		margin 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.1s;
+}
+
+.messages__item--approval.messages__item--removing {
+	opacity: 0;
+	transform: translateX(12px) scale(0.97);
+	max-height: 0;
+	margin: 0;
+	overflow: hidden;
+}
+
+.approval-card {
+	background: var(--color-surface-secondary);
+	border: 1px solid var(--color-foreground-base);
+	border-left: 3px solid var(--color-warning);
+	border-radius: var(--border-radius-base);
+	padding: var(--spacing-s);
+	display: block;
+	max-width: 100%;
+	transition: all 0.3s ease;
+}
+
+.approval-card--processing {
+	opacity: 0.6;
+	pointer-events: none;
+}
+
+.approval-card__content {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-s);
+}
+
+.approval-card__title {
+	font-size: var(--font-size-s);
+	color: var(--color-text-dark);
+	font-weight: var(--font-weight-bold);
+}
+
+.approval-card__title code {
+	font-family: var(--font-family-monospace);
+	background: var(--color-background-light);
+	padding: var(--spacing-4xs) var(--spacing-3xs);
+	border-radius: var(--border-radius-small);
+	font-size: var(--font-size-xs);
+	color: var(--color-text-dark);
+}
+
+.approval-card__actions {
+	display: flex;
+	gap: var(--spacing-xs);
+	width: 100%;
+}
+
+.approval-card__actions button {
+	flex: 1;
+	min-width: 0;
 }
 </style>
