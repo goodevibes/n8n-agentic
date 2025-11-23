@@ -2,7 +2,7 @@
 
 **n8n with AI coding agent integration.** This fork adds a chat sidebar and "Fix with vibe8n" button to help you build and debug workflows.
 
-![n8n.io - Screenshot](https://raw.githubusercontent.com/n8n-io/n8n/master/assets/n8n-screenshot-readme.png)
+[![Voir la vidéo en HD](https://img.youtube.com/vi/SCPkaxhP70k/maxresdefault.jpg)](https://www.youtube.com/watch?v=SCPkaxhP70k)
 
 ## What's This?
 
@@ -27,14 +27,33 @@ pnpm build > build.log 2>&1
 
 **Option A: Use Hosted vibe8n API (easiest)**
 
+1. Set the API URL:
 ```bash
 export VITE_MCP_AGENT_API_URL='https://api.vibe8n.io'
+```
+
+2. Expose your local n8n with a tunnel (required for cloud agent):
+
+- Run the following command to start n8n with a built-in tunnel:
+
+```bash
+pnpm run start:tunnel
+```
+
+- Copy the generated public URL (e.g., https://your-name.hooks.n8n.cloud).
+
+- When you open the vibe8n Agent Sidebar in the UI (after step 3 below), paste this URL into the sidebar to configure the agent's connection.
+
+3. Start the n8n frontend:
+```bash
 pnpm --filter n8n-editor-ui serve
 ```
 
-Open http://localhost:5678, click "vibe8n" button, sign up for an API key.
+Open http://localhost:5678, click the "vibe8n" button, and sign up for an API key if prompted.
 
 **Option B: Run Example Agent (Self-Hosted)**
+
+This runs everything locally, so no tunnel is needed.
 
 ```bash
 # In examples/ directory
