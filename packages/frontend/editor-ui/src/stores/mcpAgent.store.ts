@@ -513,6 +513,7 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 	}
 
 	function handleStreamedEvent(event: McpAgentEvent) {
+		if (!isSending.value) return;
 		hasReceivedStreamEvent.value = true;
 		handleAgentEvents([event]);
 	}
@@ -520,6 +521,8 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 	async function sendDraft() {
 		const text = draft.value.trim();
 		if (!text || isSending.value) return;
+
+		isSending.value = true;
 
 		ensureSession();
 		// Wait a moment for EventSource to connect
@@ -536,8 +539,6 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 		}
 		hasReceivedStreamEvent.value = false;
 		seedTracePlaceholder();
-
-		isSending.value = true;
 
 		try {
 			const headers: Record<string, string> = {
@@ -803,12 +804,12 @@ function summariseEvent(event: McpAgentEvent): string | null {
 			return content || 'Thinking…';
 		}
 		case 'tool_call': {
-			const toolName = extractToolName(event) || 'tool';
-			return `Invoked ${toolName}`;
+			// Hide tool invocations from "Thinking" display
+			return null;
 		}
 		case 'tool_result': {
-			const toolName = extractToolName(event);
-			return toolName ? `${toolName} completed` : 'Tool completed';
+			// Hide tool results from "Thinking" display
+			return null;
 		}
 		case 'system_notice': {
 			// Keep truncation for system notices (usually short anyway)

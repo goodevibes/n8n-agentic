@@ -501,13 +501,17 @@ watch(
 								class="settings-form"
 							>
 								<N8nInput
+									id="n8nApiUrl"
+									name="n8nApiUrl"
 									v-model="n8nApiUrl"
 									type="text"
 									placeholder="n8n instance URL (e.g., http://localhost:5678)"
 									:disabled="isSavingN8n || n8nConfigured"
-									autocomplete="off"
+									autocomplete="url"
 								/>
 								<N8nInput
+									id="n8nApiKey"
+									name="n8nApiKey"
 									v-model="n8nApiKey"
 									type="password"
 									placeholder="Enter your n8n API key..."

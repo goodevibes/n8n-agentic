@@ -28,7 +28,7 @@ pnpm build > build.log 2>&1
 **Option A: Use Hosted vibe8n API (easiest)**
 
 ```bash
-export VITE_MCP_AGENT_API_URL='https://api.vibe8n.com'
+export VITE_MCP_AGENT_API_URL='https://api.vibe8n.io'
 pnpm --filter n8n-editor-ui serve
 ```
 
@@ -95,7 +95,7 @@ Just change the environment variable before starting the frontend:
 
 ```bash
 # Use hosted API
-export VITE_MCP_AGENT_API_URL='https://api.vibe8n.com'
+export VITE_MCP_AGENT_API_URL='https://api.vibe8n.io'
 
 # OR use local agent
 export VITE_MCP_AGENT_API_URL='http://localhost:8000'
@@ -108,7 +108,7 @@ pnpm --filter n8n-editor-ui serve
 
 ```bash
 # Add to ~/.bashrc or ~/.zshrc
-alias n8n-hosted='export VITE_MCP_AGENT_API_URL="https://api.vibe8n.com" && pnpm --filter n8n-editor-ui serve'
+alias n8n-hosted='export VITE_MCP_AGENT_API_URL="https://api.vibe8n.io" && pnpm --filter n8n-editor-ui serve'
 alias n8n-local='export VITE_MCP_AGENT_API_URL="http://localhost:8000" && pnpm --filter n8n-editor-ui serve'
 ```
 
@@ -198,6 +198,26 @@ The integration adds these files to n8n:
 If your agent implements `GET /sessions/:id/events` (Server-Sent Events), the UI shows real-time updates as the agent thinks and works.
 
 ## Troubleshooting
+ 
+### Connection Issues: Cloud Agent vs. Localhost n8n
+
+If you are using the **Cloud Agent** (`https://api.vibe8n.io`) and your n8n is running locally (`http://localhost:5678`), you might see errors like:
+> "n8n instance is not accessible" or "Network Error"
+
+**Reason:** The Cloud Agent running on our servers cannot see your `localhost`.
+
+**Solution:** You must expose your local n8n to the internet using a tunnel.
+
+1. Stop your local n8n (`Ctrl+C`).
+2. Run with tunnel:
+   ```bash
+   pnpm run start:tunnel
+   ```
+3. Copy the generated URL (e.g., `https://your-name.hooks.n8n.cloud`).
+4. Paste this URL into the **vibe8n Agent Sidebar**.
+
+Alternatively, use a self-hosted agent (see "Option B" in Quick Start) which can connect to `localhost`.
+
 
 **Button doesn't appear:**
 - Set `VITE_MCP_AGENT_API_URL` before starting frontend
@@ -255,7 +275,7 @@ pnpm lint && pnpm typecheck
 Build for production:
 
 ```bash
-export VITE_MCP_AGENT_API_URL='https://api.vibe8n.com'
+export VITE_MCP_AGENT_API_URL='https://api.vibe8n.io'
 pnpm build
 ```
 
