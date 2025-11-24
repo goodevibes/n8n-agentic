@@ -34,15 +34,16 @@ export VITE_MCP_AGENT_API_URL='https://api.vibe8n.io'
 
 2. Expose your local n8n with a tunnel (required for cloud agent):
 
-- Run the following command to start n8n with a built-in tunnel:
+   The built-in n8n tunnel (`hooks.n8n.cloud`) **does not work** because it blocks API access. You must use a full tunnel like **ngrok**.
 
-```bash
-pnpm run start:tunnel
-```
+   - Install ngrok: `brew install ngrok/ngrok/ngrok` (or download from ngrok.com)
+   - Start the tunnel:
+     ```bash
+     ngrok http 5678
+     ```
+   - Copy the generated URL (e.g., `https://your-name.ngrok-free.app`).
 
-- Copy the generated public URL (e.g., https://your-name.hooks.n8n.cloud).
-
-- When you open the vibe8n Agent Sidebar in the UI (after step 3 below), paste this URL into the sidebar to configure the agent's connection.
+   - When you open the vibe8n Agent Sidebar in the UI (after step 3 below), paste this URL into the sidebar to configure the agent's connection.
 
 3. Start the n8n frontend:
 ```bash
@@ -227,13 +228,14 @@ If you are using the **Cloud Agent** (`https://api.vibe8n.io`) and your n8n is r
 
 **Solution:** You must expose your local n8n to the internet using a tunnel.
 
-1. Stop your local n8n (`Ctrl+C`).
-2. Run with tunnel:
+   **Note:** Do not use `pnpm run start:tunnel` (hooks.n8n.cloud) as it blocks API access. Use **ngrok** instead:
+
+1. Install & start ngrok:
    ```bash
-   pnpm run start:tunnel
+   ngrok http 5678
    ```
-3. Copy the generated URL (e.g., `https://your-name.hooks.n8n.cloud`).
-4. Paste this URL into the **vibe8n Agent Sidebar**.
+2. Copy the generated URL (e.g., `https://your-name.ngrok-free.app`).
+3. Paste this URL into the **vibe8n Agent Sidebar**.
 
 Alternatively, use a self-hosted agent (see "Option B" in Quick Start) which can connect to `localhost`.
 
