@@ -11,6 +11,14 @@ import {
 } from '@n8n/design-system';
 import { useMcpAgentStore, TRACE_PLACEHOLDER_SUMMARY } from '@/stores/mcpAgent.store';
 
+// Development-only logging
+const isDev = import.meta.env.DEV;
+function devError(...args: unknown[]) {
+	if (isDev) {
+		console.error(...args);
+	}
+}
+
 const store = useMcpAgentStore();
 const {
 	messages,
@@ -161,7 +169,7 @@ async function validateVibeApiKey() {
 			vibeApiUserEmail.value = null;
 		}
 	} catch (error) {
-		console.error('Failed to validate vibe8n API key:', error);
+		devError('Failed to validate vibe8n API key:', error);
 		vibeApiConfigured.value = false;
 		vibeApiUserEmail.value = null;
 	}
@@ -219,7 +227,7 @@ async function handleUpgrade(plan: 'starter' | 'scale') {
 	try {
 		await store.createCheckoutSession(plan);
 	} catch (error) {
-		console.error('Upgrade error:', error);
+		devError('Upgrade error:', error);
 	}
 }
 
@@ -289,7 +297,7 @@ async function fetchN8nCredentials() {
 			n8nConfiguredUrl.value = data.n8n_api_url;
 		}
 	} catch (error) {
-		console.error('Failed to fetch n8n credentials:', error);
+		devError('Failed to fetch n8n credentials:', error);
 	}
 }
 
@@ -366,7 +374,7 @@ async function handleRemoveN8nCredentials() {
 		n8nConfiguredUrl.value = null;
 		n8nApiKey.value = '';
 	} catch (error) {
-		console.error('Failed to remove n8n credentials:', error);
+		devError('Failed to remove n8n credentials:', error);
 	}
 }
 

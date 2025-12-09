@@ -39,6 +39,24 @@ const MIN_CHAT_WIDTH = 280;
 const MAX_CHAT_WIDTH = 520;
 export const TRACE_PLACEHOLDER_SUMMARY = 'Waiting for response…';
 
+// Development-only logging
+const isDev = import.meta.env.DEV;
+function devLog(...args: unknown[]) {
+	if (isDev) {
+		console.log(...args);
+	}
+}
+function devWarn(...args: unknown[]) {
+	if (isDev) {
+		console.warn(...args);
+	}
+}
+function devError(...args: unknown[]) {
+	if (isDev) {
+		console.error(...args);
+	}
+}
+
 function sanitizeBaseUrl(raw: string | undefined): string {
 	if (!raw) return 'http://localhost:8000';
 	return raw.endsWith('/') ? raw.slice(0, -1) : raw;
@@ -103,7 +121,7 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 
 		// For localhost/self-hosted: only require auth if explicitly enabled
 		const requireAuthFlag = import.meta.env.VITE_MCP_AGENT_REQUIRE_AUTH as string | undefined;
-		console.log('[McpAgent] shouldRequireAuth check:', {
+		devLog('[McpAgent] shouldRequireAuth check:', {
 			apiUrl,
 			requireAuthFlag,
 			result: requireAuthFlag === 'true',
@@ -114,12 +132,12 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 	const isAuthenticated = computed(() => {
 		// If auth is not required, always consider authenticated
 		if (!shouldRequireAuth.value) {
-			console.log('[McpAgent] isAuthenticated: true (auth not required)');
+			devLog('[McpAgent] isAuthenticated: true (auth not required)');
 			return true;
 		}
 		// If auth is required, check for user API key
 		const result = !!userApiKey.value;
-		console.log('[McpAgent] isAuthenticated:', result, 'userApiKey:', userApiKey.value);
+		devLog('[McpAgent] isAuthenticated:', result, 'userApiKey:', userApiKey.value);
 		return result;
 	});
 	const eventStream = ref<EventSource | null>(null);
@@ -171,15 +189,15 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 					if (!('type' in agentEvent)) return;
 					handleStreamedEvent(agentEvent as McpAgentEvent);
 				} catch (error) {
-					console.warn('[McpAgent] Failed to parse event stream payload', error);
+					devWarn('[McpAgent] Failed to parse event stream payload', error);
 				}
 			};
 			source.onerror = (error) => {
-				console.warn('[McpAgent] Event stream error', error);
+				devWarn('[McpAgent] Event stream error', error);
 			};
 			eventStream.value = source;
 		} catch (error) {
-			console.warn('[McpAgent] Unable to open event stream', error);
+			devWarn('[McpAgent] Unable to open event stream', error);
 		}
 	}
 
@@ -374,7 +392,7 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 				userApiKey.value = stored;
 			}
 		} catch (error) {
-			console.warn('[McpAgent] Failed to load API key from localStorage', error);
+			devWarn('[McpAgent] Failed to load API key from localStorage', error);
 		}
 	}
 
@@ -384,7 +402,7 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 			localStorage.setItem('mcpAgentApiKey', apiKey);
 			userApiKey.value = apiKey;
 		} catch (error) {
-			console.warn('[McpAgent] Failed to save API key to localStorage', error);
+			devWarn('[McpAgent] Failed to save API key to localStorage', error);
 		}
 	}
 
@@ -394,7 +412,7 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 			localStorage.removeItem('mcpAgentApiKey');
 			userApiKey.value = null;
 		} catch (error) {
-			console.warn('[McpAgent] Failed to clear API key', error);
+			devWarn('[McpAgent] Failed to clear API key', error);
 		}
 	}
 
@@ -500,15 +518,15 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 
 	async function refreshWorkspaceAfterApproval() {
 		// Refresh workspace 2 seconds after approval to catch any changes
-		console.log('[McpAgent] Scheduling workspace refresh in 2 seconds...');
+		devLog('[McpAgent] Scheduling workspace refresh in 2 seconds...');
 		await new Promise((resolve) => setTimeout(resolve, 2000));
 
 		try {
-			console.log('[McpAgent] Refreshing workspace now...');
+			devLog('[McpAgent] Refreshing workspace now...');
 			await workflowsStore.fetchAllWorkflows();
-			console.log('[McpAgent] ✓ Workspace refreshed successfully');
+			devLog('[McpAgent] ✓ Workspace refreshed successfully');
 		} catch (error) {
-			console.error('[McpAgent] ✗ Failed to refresh workspace:', error);
+			devError('[McpAgent] ✗ Failed to refresh workspace:', error);
 		}
 	}
 
@@ -637,7 +655,7 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 				plans.value = data.plans || [];
 			}
 		} catch (error) {
-			console.error('Failed to fetch plans:', error);
+			devError('Failed to fetch plans:', error);
 		}
 	}
 
@@ -712,7 +730,7 @@ export const useMcpAgentStore = defineStore('mcpAgent', () => {
 				void refreshWorkspaceAfterApproval();
 			}
 		} catch (error) {
-			console.error('Error responding to approval:', error);
+			devError('Error responding to approval:', error);
 			hasError.value = error instanceof Error ? error.message : 'Failed to respond to approval';
 		}
 	}
