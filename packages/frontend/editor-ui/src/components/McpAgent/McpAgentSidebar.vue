@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
+import { useI18n } from '@n8n/i18n';
 import SlideTransition from '@/components/transitions/SlideTransition.vue';
 import {
 	N8nButton,
@@ -11,6 +12,15 @@ import {
 } from '@n8n/design-system';
 import { useMcpAgentStore, TRACE_PLACEHOLDER_SUMMARY } from '@/stores/mcpAgent.store';
 
+// Development-only logging
+const isDev = import.meta.env.DEV;
+function devError(...args: unknown[]) {
+	if (isDev) {
+		console.error(...args);
+	}
+}
+
+const i18n = useI18n();
 const store = useMcpAgentStore();
 const {
 	messages,
@@ -67,8 +77,8 @@ const traceBadgeCount = computed(() =>
 );
 const shouldShowThinking = computed(() => isSending.value || hasTrace.value);
 const thinkingButtonLabel = computed(() => {
-	if (isTraceExpanded.value) return 'Hide thinking';
-	return 'Thinking…';
+	if (isTraceExpanded.value) return i18n.baseText('mcpAgent.thinking.hide');
+	return i18n.baseText('mcpAgent.thinking.label');
 });
 const messagesContainer = ref<HTMLElement | null>(null);
 
@@ -161,7 +171,7 @@ async function validateVibeApiKey() {
 			vibeApiUserEmail.value = null;
 		}
 	} catch (error) {
-		console.error('Failed to validate vibe8n API key:', error);
+		devError('Failed to validate vibe8n API key:', error);
 		vibeApiConfigured.value = false;
 		vibeApiUserEmail.value = null;
 	}
@@ -185,7 +195,7 @@ function toggleApiKeySettings() {
 async function handleSaveApiKey() {
 	const key = apiKeyInput.value.trim();
 	if (!key) {
-		apiKeyError.value = 'Please enter a valid API key';
+		apiKeyError.value = i18n.baseText('mcpAgent.error.apiKeyRequired');
 		return;
 	}
 
@@ -199,10 +209,10 @@ async function handleSaveApiKey() {
 		await validateVibeApiKey();
 
 		if (!vibeApiConfigured.value) {
-			apiKeyError.value = 'Invalid API key. Please check and try again.';
+			apiKeyError.value = i18n.baseText('mcpAgent.error.invalidApiKey');
 		}
 	} catch (error) {
-		apiKeyError.value = error instanceof Error ? error.message : 'Failed to save API key';
+		apiKeyError.value = error instanceof Error ? error.message : i18n.baseText('mcpAgent.error.saveCredentialsFailed');
 	} finally {
 		isSavingKey.value = false;
 	}
@@ -219,7 +229,7 @@ async function handleUpgrade(plan: 'starter' | 'scale') {
 	try {
 		await store.createCheckoutSession(plan);
 	} catch (error) {
-		console.error('Upgrade error:', error);
+		devError('Upgrade error:', error);
 	}
 }
 
@@ -289,7 +299,7 @@ async function fetchN8nCredentials() {
 			n8nConfiguredUrl.value = data.n8n_api_url;
 		}
 	} catch (error) {
-		console.error('Failed to fetch n8n credentials:', error);
+		devError('Failed to fetch n8n credentials:', error);
 	}
 }
 
@@ -300,12 +310,12 @@ async function handleSaveN8nCredentials() {
 	const key = n8nApiKey.value.trim();
 
 	if (!url) {
-		n8nError.value = 'URL is required';
+		n8nError.value = i18n.baseText('mcpAgent.error.n8nUrlRequired');
 		return;
 	}
 
 	if (!key) {
-		n8nError.value = 'API key is required';
+		n8nError.value = i18n.baseText('mcpAgent.error.n8nKeyRequired');
 		return;
 	}
 
@@ -366,7 +376,7 @@ async function handleRemoveN8nCredentials() {
 		n8nConfiguredUrl.value = null;
 		n8nApiKey.value = '';
 	} catch (error) {
-		console.error('Failed to remove n8n credentials:', error);
+		devError('Failed to remove n8n credentials:', error);
 	}
 }
 
@@ -394,12 +404,12 @@ watch(
 			<div class="panel" :style="{ width: `${chatWidth}px` }">
 				<header class="panel__header">
 					<div>
-						<h3 class="panel__title">vibe8n</h3>
+						<h3 class="panel__title">{{ i18n.baseText('mcpAgent.title') }}</h3>
 						<p v-if="isAuthenticated" class="panel__subtitle">{{ maskedApiKey }}</p>
-						<p v-else class="panel__subtitle">Configure API key to get started</p>
+						<p v-else class="panel__subtitle">{{ i18n.baseText('mcpAgent.subtitle.notAuthenticated') }}</p>
 					</div>
 					<div class="panel__actions">
-						<N8nButton v-if="isAuthenticated" text @click="onClear">Reset</N8nButton>
+						<N8nButton v-if="isAuthenticated" text @click="onClear">{{ i18n.baseText('mcpAgent.button.reset') }}</N8nButton>
 						<N8nIconButton
 							v-if="isAuthenticated"
 							icon="cog"
@@ -415,23 +425,23 @@ watch(
 				<section v-if="!isAuthenticated && !isApiKeyModalOpen" class="panel__body panel__auth">
 					<div class="auth-form">
 						<div class="auth-form__content">
-							<h4 class="auth-form__title">Configure vibe8n</h4>
+							<h4 class="auth-form__title">{{ i18n.baseText('mcpAgent.auth.title') }}</h4>
 							<p class="auth-form__description">
-								Get your API key to start using AI-powered workflows
+								{{ i18n.baseText('mcpAgent.auth.description') }}
 							</p>
 
 							<N8nButton type="secondary" size="large" @click="openKeyGenerationWebsite">
-								Get API Key
+								{{ i18n.baseText('mcpAgent.button.getApiKey') }}
 							</N8nButton>
 
 							<div class="auth-form__divider"></div>
 
 							<form @submit.prevent="handleSaveApiKey" autocomplete="off">
-								<p class="auth-form__input-label">Then paste your key below</p>
+								<p class="auth-form__input-label">{{ i18n.baseText('mcpAgent.auth.inputLabel') }}</p>
 								<N8nInput
 									v-model="apiKeyInput"
 									type="password"
-									placeholder="v8_..."
+									:placeholder="i18n.baseText('mcpAgent.input.apiKeyPlaceholder')"
 									:disabled="isSavingKey"
 									autocomplete="new-password"
 								/>
@@ -442,7 +452,7 @@ watch(
 									:disabled="!apiKeyInput.trim()"
 									@click="handleSaveApiKey"
 								>
-									Save API Key
+									{{ i18n.baseText('mcpAgent.button.saveApiKey') }}
 								</N8nButton>
 							</form>
 						</div>
@@ -454,15 +464,15 @@ watch(
 					<div class="settings-content">
 						<!-- vibe8n API Key Section -->
 						<div class="settings-section">
-							<h4 class="settings-section__title">vibe8n API</h4>
+							<h4 class="settings-section__title">{{ i18n.baseText('mcpAgent.settings.vibeApiTitle') }}</h4>
 							<p
 								v-if="vibeApiConfigured"
 								class="settings-section__status settings-section__status--success"
 							>
-								✓ Connected as <code>{{ vibeApiUserEmail }}</code>
+								{{ i18n.baseText('mcpAgent.settings.vibeApiConnected', { interpolate: { email: vibeApiUserEmail || '' } }) }}
 							</p>
 							<p v-else-if="userApiKey" class="settings-section__status">
-								Current: <code>{{ maskedApiKey }}</code>
+								{{ i18n.baseText('mcpAgent.settings.vibeApiCurrent', { interpolate: { apiKey: maskedApiKey } }) }}
 							</p>
 							<form @submit.prevent="handleSaveApiKey" autocomplete="off" class="settings-form">
 								<N8nInput
@@ -479,9 +489,9 @@ watch(
 										:disabled="!apiKeyInput.trim()"
 										@click="handleSaveApiKey"
 									>
-										Update
+										{{ i18n.baseText('mcpAgent.button.update') }}
 									</N8nButton>
-									<N8nButton type="tertiary" @click="openKeyGenerationWebsite"> Get Key </N8nButton>
+									<N8nButton type="tertiary" @click="openKeyGenerationWebsite">{{ i18n.baseText('mcpAgent.button.getApiKey') }}</N8nButton>
 								</div>
 							</form>
 						</div>
@@ -704,7 +714,7 @@ watch(
 						<N8nInput
 							v-model="store.draft"
 							type="textarea"
-							placeholder="Ask the agent to inspect workflows, search data, or run tools..."
+							:placeholder="i18n.baseText('mcpAgent.input.placeholder')"
 							:rows="3"
 							@keydown="onInputKeydown"
 						></N8nInput>
@@ -714,7 +724,7 @@ watch(
 							:disabled="!store.canSubmit"
 							@click="onSubmit"
 						>
-							Send
+							{{ i18n.baseText('mcpAgent.button.send') }}
 						</N8nButton>
 					</form>
 					<p v-if="errorMessage" class="panel__error">{{ errorMessage }}</p>
